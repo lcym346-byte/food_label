@@ -1,0 +1,30 @@
+name: food_label_pro_complete
+description: 完整版食品營養標示、配方管理、法規查詢與熱感列印 Flutter 專案。
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  sqflite: ^2.4.1
+  path: ^1.9.1
+  http: ^1.3.0
+  html: ^0.15.5
+  crypto: ^3.0.6
+  shared_preferences: ^2.5.3
+  intl: ^0.20.2
+  thermal_printer_flutter: any
+  esc_pos_utils_plus: ^2.0.4
+  image: ^4.5.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
