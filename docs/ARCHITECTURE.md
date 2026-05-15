@@ -6,6 +6,7 @@
 
 ## 2. 技術架構
 
+
 ```text
 使用者操作
   ↓
@@ -19,29 +20,48 @@ web/app.js 商業邏輯
   ├─ 法規資料庫 / 全文搜尋 / 同步紀錄
   └─ 備份還原 / 列印
   ↓
-localStorage 離線資料庫 + web/data/tfda_nutrition_compact.json（TFND 2025 UPDATE1 精簡檔）
+記憶體 state（單一物件，所有讀寫的真實來源）
+  ↓
+持久層 v2（2026-05-15 升級）
+  ├─ 主：IndexedDB（DB: foodLabelProDB，store: appState，key: foodLabelPro.state.v1）
+  └─ 備：localStorage（fallback；舊版資料來源，升級後保留）
+  ＋ web/data/tfda_nutrition_compact.json（TFND 2025 UPDATE1 精簡檔，由 fetch 載入）
 ```
 
 Android 版：
 
 ```text
-MainActivity.java
+MainActivity.java（WebSettings 啟用 DomStorage、Database，IndexedDB 預設可用）
   ↓ 載入
 file:///android_asset/web/index.html
   ↓
 同一套 web/app.js
   ↓
-Android WebView DOM Storage
+Android WebView 內建 IndexedDB（與 DOM Storage 共用 storage 子系統）
 ```
+
+
 
 ## 3. 為何採用此架構
 
+
 - **可快速上 GitHub 使用**：不需要伺服器、資料庫或 API Key；TFND/TFDA 精簡 JSON 隨靜態檔部署。
-- **Android 7.1.1 相容性高**：WebView + Java 原生殼層能降低 Flutter/新 SDK 對舊裝置的風險。
-- **功能一致**：Web 與 APK 共用同一套核心程式，避免兩份程式邏輯不同步。
-- **易維護**：商業邏輯集中在 `web/app.js`，繁中註釋完整。
+- **Android 7.1.1 相容性高**：WebView + Java 原生殼層能降低 Flutter/新 SDK 對舊裝置的風險。IndexedDB 自 API 19 起即由 Android WebView 原生支援，minSdk 21 無相容性問題。
+- **功能一致**：Web 與 APK 共用同一套核心程式，`web/app.js` 與 `app/src/main/assets/web/app.js` 為鏡像，任何修改需同步雙寫。
+- **易維護**：商業邏輯集中在 `web/app.js`，繁中註釋完整；持久層採「記憶體為真，磁碟非同步寫入」策略，業務邏輯無需感知底層儲存。
+
 
 ## 4. 資料模型
+
+### 持久層儲存策略
+
+- **唯一 key**：`foodLabelPro.state.v1`（IndexedDB 與 localStorage 兩邊同 key）。
+- **儲存內容**：以 `JSON.stringify` 序列化的單一 state 物件，欄位為 `ingredients[]`、`recipes[]`、`regulations[]`、`activity[]`、`lastSyncAt`、`selectedRecipeId`。
+- **讀取順序**：啟動時先試 IndexedDB → 若空再讀 localStorage（首次升級自動遷移到 IndexedDB，並在 activity 紀錄一筆「系統升級」訊息）→ 仍空則建立種子資料。
+- **寫入策略**：所有 CRUD 仍以同步方式更新 in-memory state 並立即 `renderAll()`；磁碟寫入為 fire-and-forget 非同步序列佇列（`persistQueue`），不阻塞 UI，避免破壞既有同步呼叫流程。
+- **容錯**：IndexedDB 開啟失敗（極端瀏覽器、隱私模式）自動退回 localStorage；寫入失敗靜默不丟例外。
+- **舊資料保留**：升級後 localStorage 那筆**不刪**，作為 fallback 與回滾備援。「重置示範資料」會同時清除 IndexedDB 與 localStorage。
+
 
 ### 原料 ingredient
 
@@ -81,7 +101,7 @@ Android WebView DOM Storage
 | type | 法規分類 |
 | title | 標題 |
 | url | 來源連結 |
-| text | 條文摘要或同步文字 |
+| text | 條文摘要或同步全文（IndexedDB 升級後不再受 localStorage ~5MB 限制） |
 | tags | 全文檢索標籤 |
 | checksum | 版本變更校驗碼 |
 | fetchedAt | 抓取時間 |
@@ -117,11 +137,12 @@ https://data.fda.gov.tw/opendata/exportDataList.do?method=ExportData&InfoId=20&l
 4. 依食品整合編號輸出每一食品一筆的精簡結構。
 5. 輸出 `web/data/tfda_nutrition_compact.json` 與 `app/src/main/assets/web/data/tfda_nutrition_compact.json`。
 
-目前精簡檔包含 2,213 筆食品，已包含頁面上的 2025 年取樣新增項目；搜尋會比對食品名稱、俗名、英文名、分類與描述，依完全符合、名稱包含、俗名/英文名包含與關鍵字命中加權排序。TFND/TFDA 原始資料中「反式脂肪」單位為 mg，App 表單與標示採 g，因此產生器會自動將反式脂肪 mg 轉為 g；鈉保留 mg。
+目前精簡檔包含 2,213 筆食品，已包含頁面上的 2025 年取樣新增項目；搜尋會比對食品名稱、俗名、英文名、分類與描述，依完全符合、名稱包含、俗名/英文名包含與關鍵字命中加權排序。TFND/TFDA 原始資料中「反式脂肪」單位為 mg，App 表單與標示採 g，因此產生器會自動將反式脂肪 mg 轉為 g；鈉保留 mg。此 JSON 由 `fetch()` 載入，與持久層 IndexedDB 無關，不佔用 IndexedDB 配額。
 
 ## 7. 部署流程
 
-- Web：`web/` 目錄可由 GitHub Pages 或任何靜態主機部署，Service Worker 會快取核心檔與 TFDA 精簡 JSON。
+- Web：`web/` 目錄可由 GitHub Pages 或任何靜態主機部署，Service Worker 會快取核心檔與 TFDA 精簡 JSON。修改 `web/app.js` 必須同步升 `web/sw.js` 的 `CACHE_NAME`（目前 v5），並雙寫到 `app/src/main/assets/web/`。
+
 - Android：`.github/workflows/android-apk.yml` 使用 JDK 17 與 Android Gradle Plugin 建置 APK artifact；若 GitHub App 無 workflow 權限，請依 `docs/GITHUB_WORKFLOWS_MANUAL_SETUP.md` 手動建立 workflow。
 
 ## 8. 營養資料查詢限制
@@ -130,7 +151,14 @@ https://data.fda.gov.tw/opendata/exportDataList.do?method=ExportData&InfoId=20&l
 
 ## 9. 後續擴充建議
 
+
 - 串接藍牙 ESC/POS SDK，補上熱感印表機直連列印。
-- 將 localStorage 升級為 IndexedDB，支援更大法規全文資料。
 - 加入正式 release keystore 與 Play Console 上架設定。
 - 建立自動化 E2E 測試，確認配方換算與標示格式不回歸。
+- 法規資料如未來規模再上升，可在現行 `appState` 單 key 之外加開獨立 object store（如 `regulations`），改用 cursor 查詢進一步降低載入時間。
+
+- 
+## 10. 變更紀錄
+
+- **2026-05-15** 持久層由 localStorage 升級為 IndexedDB；保留 localStorage 作 fallback；解除大量法規全文容量限制。鏡像同步 `web/` 與 `app/src/main/assets/web/`，`CACHE_NAME` v4 → v5。
+
