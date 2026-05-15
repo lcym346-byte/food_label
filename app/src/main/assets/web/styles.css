@@ -44,6 +44,7 @@ main{padding:1.2rem clamp(1rem,4vw,3rem) 4rem}
 .toolbar{display:flex;gap:.75rem;flex-wrap:wrap;margin:1rem 0}
 .toolbar input,select,input,textarea{width:100%;border:1px solid var(--line);border-radius:12px;padding:.78rem;background:white;font:inherit}
 .toolbar input{flex:1;min-width:260px}
+.toolbar select{flex:0 0 auto;width:auto;min-width:160px}
 .file-label input{display:none}
 .block{display:block;margin-top:.75rem;text-align:center}
 .muted-note{color:var(--muted);font-size:.9rem;margin:.25rem 0 .8rem}
@@ -54,7 +55,22 @@ th,td{padding:.85rem;border-bottom:1px solid var(--line);text-align:left;vertica
 th{background:#f0fdfa;color:#134e4a}
 
 .label-layout{display:grid;grid-template-columns:minmax(280px,440px) 1fr;gap:1rem}
+.label-side{display:grid;gap:1rem}
 .label-preview{background:#fff;color:#000;font-family:"Noto Sans TC","Microsoft JhengHei",sans-serif}
+
+/* ========== 列印批次資訊 ========== */
+.ps-actions{display:flex;justify-content:flex-end;gap:.6rem;margin:.8rem 0 0;padding:0;flex-wrap:wrap}
+.lookup-btn-group{display:flex;gap:.5rem;flex-wrap:wrap}
+
+/* ========== TFDA 資料庫瀏覽分頁 ========== */
+.pager{display:flex;align-items:center;justify-content:center;gap:1rem;margin:1rem 0;flex-wrap:wrap}
+.pager span{font-weight:700;color:var(--muted)}
+#nutritionTable td:nth-child(3),
+#nutritionTable td:nth-child(4),
+#nutritionTable td:nth-child(5),
+#nutritionTable td:nth-child(6),
+#nutritionTable td:nth-child(7){white-space:nowrap;text-align:right}
+#nutritionTable .nutri-actions{display:flex;gap:.4rem;flex-wrap:wrap}
 
 /* ========== 標示版面（TFDA 九大項） ========== */
 .food-label{border:3px solid #111;padding:14px;max-width:620px;margin:auto;color:#000}
@@ -68,6 +84,7 @@ th{background:#f0fdfa;color:#134e4a}
 .label-additives{font-size:.92rem;color:#111;line-height:1.5}
 .label-allergen{font-weight:900;padding:4px 0}
 .label-warning{font-size:.9rem;line-height:1.5;padding:2px 0}
+.label-footer-meta{margin-top:10px;font-size:.8rem;color:#444}
 
 /* 營養標示（沿用既有風格） */
 .nutrition-block{border-top:3px solid #111;margin-top:6px;padding-top:6px}
@@ -129,7 +146,7 @@ menu{display:flex;justify-content:flex-end;gap:.7rem;padding:0;margin:.8rem 0 0}
 /* ========== Toast / 線上查詢 ========== */
 #toast{position:fixed;left:50%;bottom:1rem;transform:translateX(-50%);background:#0f172a;color:white;padding:.85rem 1.1rem;border-radius:999px;box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:.25s}
 #toast.show{opacity:1}
-.online-lookup-box{display:flex;justify-content:space-between;align-items:center;gap:1rem;border:1px solid #99f6e4;background:#f0fdfa;border-radius:16px;padding:.9rem}
+.online-lookup-box{display:flex;justify-content:space-between;align-items:center;gap:1rem;border:1px solid #99f6e4;background:#f0fdfa;border-radius:16px;padding:.9rem;flex-wrap:wrap}
 .online-lookup-box p{margin:.25rem 0 0;color:var(--muted);font-size:.92rem}
 .lookup-results{display:grid;gap:.6rem}
 .lookup-result{border:1px solid var(--line);border-radius:14px;padding:.8rem;background:#fff}
@@ -150,12 +167,12 @@ menu{display:flex;justify-content:flex-end;gap:.7rem;padding:0;margin:.8rem 0 0}
 /* ========== 列印樣式（TFDA 要求字體 ≥ 2mm） ========== */
 @media print{
   body{background:white}
-  .app-header,.tab-bar,.toolbar,.section-title,.card:not(.print-card),button,dialog,#toast{display:none!important}
+  .app-header,.tab-bar,.toolbar,.section-title,.card:not(.print-card),button,dialog,#toast,.no-print,.label-footer-meta{display:none!important}
   main{padding:0}
   .panel{display:block}
   .panel:not(#label){display:none}
   .label-layout{display:block}
-  .label-layout>.card{display:none}
+  .label-layout>.label-side{display:none}
   .label-preview{box-shadow:none;border:0;padding:0}
   .food-label{max-width:none;border-width:2px}
   /* 字體強制 ≥ 2mm（約 7.55pt），TFDA 法規最低門檻 */
@@ -163,5 +180,4 @@ menu{display:flex;justify-content:flex-end;gap:.7rem;padding:0;margin:.8rem 0 0}
   .food-label h2.label-title{font-size:max(3mm,12pt)}
   .food-label h4{font-size:max(2.2mm,9pt)}
   .label-allergen{font-size:max(2.5mm,10pt)}
-  .nutrition-row,.label-field{padding:3px 0}
 }
