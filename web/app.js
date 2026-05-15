@@ -1,19 +1,94 @@
 /*
  * Food Label Pro 商用版核心程式
  * 說明：本檔以純瀏覽器技術實作離線資料庫、配方營養計算、TFDA 標示格式、法規檢索、匯入匯出與 PWA 安裝。
- * 註：所有資料均保存在使用者裝置 localStorage；Android APK 以 WebView 內嵌同一套程式，確保 Web 與 App 功能一致。
+ *
+ * 持久層 v2（2026-05-15）：
+ *   - 主要儲存：IndexedDB（DB 名 foodLabelProDB，store 名 appState，key 為 STORAGE_KEY）。
+ *     原因：localStorage 容量上限約 5MB，無法承載大量法規全文；IndexedDB 容量足以支援數百筆條文與長文字。
+ *   - 啟動：一次性把 IndexedDB 內容讀進 in-memory `state`，之後所有讀寫沿用記憶體 state，
+ *     寫入磁碟為非同步 fire-and-forget，不阻塞 UI，避免破壞既有同步呼叫流程。
+ *   - 遷移：第一次啟動若 IndexedDB 為空但 localStorage 有舊資料，自動搬進 IndexedDB；
+ *     舊的 localStorage 保留作為 fallback，可手動或還原備份時清除。
+ *   - 容錯：IndexedDB 失敗（極端瀏覽器/隱私模式）自動退回 localStorage，功能不中斷。
+ * Android：APK 以 WebView 內嵌同一套程式，WebSettings 已啟用 DomStorage 與 Database，IndexedDB 預設可用。
  */
 (() => {
   'use strict';
 
   // ======== 共用工具：集中處理格式化、ID、儲存與提示 ========
   const STORAGE_KEY = 'foodLabelPro.state.v1';
+  const IDB_NAME = 'foodLabelProDB';
+  const IDB_VERSION = 1;
+  const IDB_STORE = 'appState';
   const TFDA_NUTRITION_DB_URL = './data/tfda_nutrition_compact.json';
   const nowIso = () => new Date().toISOString();
   const uid = (prefix) => `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const fmt = (value, digits = 1) => Number(value || 0).toLocaleString('zh-TW', { maximumFractionDigits: digits, minimumFractionDigits: Number(value) % 1 ? digits : 0 });
   const escapeHtml = (text = '') => String(text).replace(/[&<>'"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c]));
   const parseNumber = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
+
+  // ======== IndexedDB 持久層：只動底層儲存，不影響任何業務邏輯 ========
+  // 啟動失敗自動退回 localStorage，確保極端環境（隱私模式、舊瀏覽器）仍可運作。
+  let idbHandle = null;          // 已開啟的 IDBDatabase
+  let idbAvailable = false;      // 環境是否可用 IndexedDB
+  let persistQueue = Promise.resolve(); // 寫入序列化，避免多筆並發互踩
+
+  function openIdb() {
+    return new Promise((resolve, reject) => {
+      if (typeof indexedDB === 'undefined') { reject(new Error('IndexedDB 不可用')); return; }
+      const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error || new Error('IndexedDB 開啟失敗'));
+      req.onblocked = () => reject(new Error('IndexedDB blocked'));
+    });
+  }
+
+  function idbGet(key) {
+    return new Promise((resolve, reject) => {
+      const tx = idbHandle.transaction(IDB_STORE, 'readonly');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  function idbPut(key, value) {
+    return new Promise((resolve, reject) => {
+      const tx = idbHandle.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.put(value, key);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  function idbDelete(key) {
+    return new Promise((resolve, reject) => {
+      const tx = idbHandle.transaction(IDB_STORE, 'readwrite');
+      const store = tx.objectStore(IDB_STORE);
+      const req = store.delete(key);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function persistStateAsync(snapshot) {
+    // fire-and-forget：UI 不等磁碟。錯誤靜默並嘗試 localStorage fallback，
+    // 確保即使 IndexedDB 暫時無法寫入也不會破壞使用者操作流程。
+    const payload = JSON.stringify(snapshot);
+    persistQueue = persistQueue.then(async () => {
+      if (idbAvailable && idbHandle) {
+        try { await idbPut(STORAGE_KEY, payload); return; } catch (_) { /* 落到下方 fallback */ }
+      }
+      try { localStorage.setItem(STORAGE_KEY, payload); } catch (_) { /* 容量爆了也不丟例外，紀錄留待下一輪重試 */ }
+    });
+    return persistQueue;
+  }
 
   // ======== 初始種子資料：可離線使用，符合交接文件要求的原料、法規、份量參考 ========
   const seedIngredients = [
@@ -69,25 +144,62 @@
     return Math.abs(hash).toString(16);
   }
 
-  function loadState() {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
-      if (saved?.ingredients?.length) return saved;
-    } catch (_) { /* 若資料毀損，將自動重建種子資料。 */ }
+  async function loadState() {
+    // 讀取優先順序：IndexedDB > localStorage（fallback / 舊版遷移來源）> 種子資料初始化
+    let saved = null;
+    let migratedFromLocal = false;
+
+    if (idbAvailable && idbHandle) {
+      try {
+        const raw = await idbGet(STORAGE_KEY);
+        if (raw) saved = JSON.parse(raw);
+      } catch (_) { /* 讀取毀損則往下走 localStorage */ }
+    }
+
+    // 第一次升級或 IndexedDB 不可用：嘗試從 localStorage 接手既有資料
+    if (!saved) {
+      try {
+        const legacy = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+        if (legacy?.ingredients?.length) {
+          saved = legacy;
+          migratedFromLocal = idbAvailable; // 只有在 IDB 可用時才算「遷移」
+        }
+      } catch (_) { /* 資料毀損則重建 */ }
+    }
+
+    if (saved?.ingredients?.length) {
+      if (migratedFromLocal) {
+        // 把舊資料寫進 IndexedDB；保留 localStorage 那筆作 fallback，不刪除
+        saved.activity = saved.activity || [];
+        saved.activity.unshift({ at: nowIso(), message: '系統升級：資料已自動遷移至 IndexedDB，原 localStorage 備份保留。' });
+        try { await idbPut(STORAGE_KEY, JSON.stringify(saved)); } catch (_) { /* 寫失敗下次再試 */ }
+      }
+      return saved;
+    }
+
     const base = { ingredients: seedIngredients, recipes: [], regulations: seedRegulations, activity: [], lastSyncAt: null, selectedRecipeId: null };
     state = base;
     base.recipes = seedRecipes();
     base.selectedRecipeId = base.recipes[0]?.id || null;
     base.activity.unshift({ at: nowIso(), message: '系統初始化：已建立離線種子資料與示範配方。' });
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(base));
+    await persistStateAsync(base);
     return base;
   }
 
   function saveState(message) {
     if (message) state.activity.unshift({ at: nowIso(), message });
     state.activity = state.activity.slice(0, 30);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    // 非同步寫磁碟，立即重繪畫面；既有同步呼叫流程零變動
+    void persistStateAsync(state);
     renderAll();
+  }
+
+  async function resetAllStorage() {
+    // 集中處理「重置」：同時清掉 IndexedDB 與 localStorage 的舊資料
+    if (idbAvailable && idbHandle) {
+      try { await idbDelete(STORAGE_KEY); } catch (_) { /* 忽略 */ }
+    }
+    try { localStorage.removeItem(STORAGE_KEY); } catch (_) { /* 忽略 */ }
   }
 
   function toast(message) {
@@ -487,7 +599,9 @@
     if (action === 'exportRegulations') download('food_label_regulations.json', JSON.stringify(state.regulations, null, 2));
     if (action === 'backupAll') download(`food_label_backup_${new Date().toISOString().slice(0,10)}.json`, JSON.stringify(state, null, 2));
     if (action === 'printLabel') window.print();
-    if (action === 'resetDemoData' && confirm('確定重置？此動作會覆蓋目前本機資料。')) { localStorage.removeItem(STORAGE_KEY); state = loadState(); renderAll(); }
+    if (action === 'resetDemoData' && confirm('確定重置？此動作會覆蓋目前本機資料。')) {
+      resetAllStorage().then(async () => { state = await loadState(); renderAll(); });
+    }
   });
 
   document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => {
@@ -513,6 +627,15 @@
   document.getElementById('installBtn').addEventListener('click', async () => { if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt = null; } });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 
-  state = loadState();
-  renderAll();
+  // 啟動流程：開 IndexedDB → 讀 state → 首次渲染。IndexedDB 失敗自動退回 localStorage。
+  (async () => {
+    try {
+      idbHandle = await openIdb();
+      idbAvailable = true;
+    } catch (_) {
+      idbAvailable = false;
+    }
+    state = await loadState();
+    renderAll();
+  })();
 })();
