@@ -33,7 +33,7 @@ jobs:
           rm -rf public
           mkdir public
 
-      - name: Unzip site.zip
+      - name: Unzip 營養標示.zip
         run: |
           unzip site.zip -d public
 
