@@ -250,6 +250,352 @@
 
   /* ===== SPLIT MARKER A→B ===== */
   
+  // ======== 列印批次資訊 printSession（v3.1 新增） ========
+  // 此區資料只作為「本次列印」用，不會寫回配方
+  // 使用 sessionStorage 持久化（分頁關閉後清空，重新整理保留）
+  const PRINT_SESSION_KEY = 'foodLabelPro.printSession.v1';
+  let printSession = { recipeId:'', expiryMode:'', manufactureDate:'', shelfLifeMonths:'', expiryDate:'', batchNo:'', storageOverride:'' };
+
+  function loadPrintSession(){
+    try{
+      const raw = sessionStorage.getItem(PRINT_SESSION_KEY);
+      if(raw){
+        const parsed = JSON.parse(raw);
+        printSession = { recipeId:'', expiryMode:'', manufactureDate:'', shelfLifeMonths:'', expiryDate:'', batchNo:'', storageOverride:'', ...parsed };
+      }
+    }catch(_){}
+  }
+  function savePrintSession(){
+    try{ sessionStorage.setItem(PRINT_SESSION_KEY, JSON.stringify(printSession)); }catch(_){}
+  }
+  function clearPrintSession(){
+    printSession = { recipeId:'', expiryMode:'', manufactureDate:'', shelfLifeMonths:'', expiryDate:'', batchNo:'', storageOverride:'' };
+    try{ sessionStorage.removeItem(PRINT_SESSION_KEY); }catch(_){}
+    renderPrintSessionPanel();
+    renderLabel();
+    toast('已清除本批次列印資訊');
+  }
+
+  // 合併 printSession 與配方原本的有效日期設定
+  // 優先順序：printSession 有填 → 用之；否則 fallback 到 recipe 預設
+  function computeExpiryDisplayMerged(recipe){
+    const mode = printSession.expiryMode || recipe.expiryMode || 'manufactureDate';
+    if(mode === 'date'){
+      const d = printSession.expiryDate || recipe.expiryDate || '';
+      return { manufactureDate:'', expiryDate:d };
+    }
+    const md = printSession.manufactureDate || recipe.manufactureDate || '';
+    const months = parseNumber(printSession.shelfLifeMonths) || parseNumber(recipe.shelfLifeMonths);
+    if(md && months>0){
+      const mdDate = new Date(md);
+      if(!isNaN(mdDate)){
+        const exp = new Date(mdDate);
+        exp.setMonth(exp.getMonth()+months);
+        return { manufactureDate:md, expiryDate:exp.toISOString().slice(0,10) };
+      }
+    }
+    return { manufactureDate:md, expiryDate:'' };
+  }
+
+  function renderPrintSessionPanel(){
+    const modeSel = document.getElementById('psExpiryMode');
+    if(!modeSel) return;
+    const recipe = state.recipes.find((r)=>r.id===state.selectedRecipeId)||state.recipes[0];
+    // 切換到新配方時，若 session 沒帶 recipeId，把配方預設帶進來
+    if(recipe && printSession.recipeId !== recipe.id){
+      printSession.recipeId = recipe.id;
+      printSession.expiryMode = printSession.expiryMode || recipe.expiryMode || 'manufactureDate';
+      // 製造日、保存月數、固定有效日：若 session 沒填則維持空，讓使用者每批次自填
+      savePrintSession();
+    }
+    modeSel.value = printSession.expiryMode || (recipe?.expiryMode) || 'manufactureDate';
+    document.getElementById('psManufactureDate').value = printSession.manufactureDate || '';
+    document.getElementById('psShelfLifeMonths').value = printSession.shelfLifeMonths || '';
+    document.getElementById('psExpiryDate').value = printSession.expiryDate || '';
+    document.getElementById('psBatchNo').value = printSession.batchNo || '';
+    document.getElementById('psStorageOverride').value = printSession.storageOverride || '';
+    document.querySelectorAll('[data-ps-field]').forEach((el)=>{
+      el.hidden = (el.dataset.psField !== modeSel.value);
+    });
+  }
+
+  function bindPrintSessionInputs(){
+    const map = {
+      psExpiryMode:'expiryMode', psManufactureDate:'manufactureDate', psShelfLifeMonths:'shelfLifeMonths',
+      psExpiryDate:'expiryDate', psBatchNo:'batchNo', psStorageOverride:'storageOverride'
+    };
+    Object.entries(map).forEach(([id,key])=>{
+      const el = document.getElementById(id);
+      if(!el || el.dataset.psBound) return;
+      el.dataset.psBound = '1';
+      el.addEventListener('input', ()=>{
+        printSession[key] = el.value;
+        savePrintSession();
+        if(id==='psExpiryMode'){
+          document.querySelectorAll('[data-ps-field]').forEach((x)=>{ x.hidden = (x.dataset.psField !== el.value); });
+        }
+        renderLabel();
+      });
+    });
+  }
+
+  // ======== TFDA 離線資料庫瀏覽分頁（v3.1 新增） ========
+  const NUTRITION_PAGE_SIZE = 50;
+  let nutritionBrowserState = { page:1, search:'', category:'', sort:'name', filtered:[] };
+  let nutritionBrowserTargetForm = null; // 開啟瀏覽時若帶有目標表單，「採用」會填回該表單
+
+  function getNutritionCategoryOf(food){
+    // 不同版本 compact JSON 欄位名可能略有差異，依序嘗試
+    return food.category || food.cat || food.foodGroup || food.group || food.classification || '';
+  }
+  function getNutritionNumber(food, keys){
+    for(const k of keys){
+      const v = food[k];
+      if(v !== undefined && v !== null && v !== ''){
+        const n = Number(v);
+        if(Number.isFinite(n)) return n;
+      }
+    }
+    return 0;
+  }
+  function pickNutritionFields(food){
+    return {
+      name: food.name || food.foodName || food.sample || '',
+      nameEn: food.nameEn || food.englishName || '',
+      category: getNutritionCategoryOf(food),
+      calories:    getNutritionNumber(food, ['calories','energy','kcal','熱量']),
+      protein:     getNutritionNumber(food, ['protein','蛋白質']),
+      fat:         getNutritionNumber(food, ['fat','脂肪']),
+      saturatedFat:getNutritionNumber(food, ['saturatedFat','satFat','飽和脂肪']),
+      transFat:    getNutritionNumber(food, ['transFat','反式脂肪']),
+      carbohydrate:getNutritionNumber(food, ['carbohydrate','carbs','碳水化合物']),
+      sugar:       getNutritionNumber(food, ['sugar','糖']),
+      sodium:      getNutritionNumber(food, ['sodium','鈉']),
+      fiber:       getNutritionNumber(food, ['fiber','dietaryFiber','膳食纖維'])
+    };
+  }
+
+  async function ensureNutritionDbLoaded(){
+    // 沿用既有的 offlineNutritionFoods，如尚未載入則嘗試載入
+    if(offlineNutritionFoods && offlineNutritionFoods.length) return offlineNutritionFoods;
+    if(typeof loadOfflineNutritionDatabase === 'function'){
+      try{ await loadOfflineNutritionDatabase(); return offlineNutritionFoods || []; }catch(_){}
+    }
+    // fallback：直接 fetch
+    try{
+      const r = await fetch(TFDA_NUTRITION_DB_URL);
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      const data = await r.json();
+      if(Array.isArray(data)) offlineNutritionFoods = data;
+      else if(Array.isArray(data.foods)) { offlineNutritionFoods = data.foods; offlineNutritionMeta = data.meta||null; }
+    }catch(e){ console.warn('TFDA 離線資料庫載入失敗', e); }
+    return offlineNutritionFoods || [];
+  }
+
+  function renderNutritionCategoryOptions(){
+    const sel = document.getElementById('nutritionCategoryFilter');
+    if(!sel) return;
+    const cats = [...new Set(offlineNutritionFoods.map(getNutritionCategoryOf).filter(Boolean))].sort();
+    const current = nutritionBrowserState.category;
+    sel.innerHTML = '<option value="">全部分類</option>' + cats.map((c)=>`<option value="${escapeHtml(c)}" ${c===current?'selected':''}>${escapeHtml(c)}</option>`).join('');
+  }
+
+  function filterAndSortNutrition(){
+    const q = (nutritionBrowserState.search||'').trim().toLowerCase();
+    const cat = nutritionBrowserState.category;
+    let list = offlineNutritionFoods.filter((f)=>{
+      const p = pickNutritionFields(f);
+      if(cat && p.category !== cat) return false;
+      if(!q) return true;
+      return (`${p.name} ${p.nameEn} ${p.category}`).toLowerCase().includes(q);
+    });
+    const sortKey = nutritionBrowserState.sort;
+    if(sortKey === 'name'){
+      list.sort((a,b)=> (pickNutritionFields(a).name||'').localeCompare(pickNutritionFields(b).name||'','zh-Hant'));
+    } else {
+      list.sort((a,b)=> pickNutritionFields(b)[sortKey] - pickNutritionFields(a)[sortKey]);
+    }
+    nutritionBrowserState.filtered = list;
+  }
+
+  async function renderNutritionBrowser(){
+    const tbody = document.getElementById('nutritionTable');
+    const meta = document.getElementById('nutritionMeta');
+    const pagerInfo = document.getElementById('nutritionPagerInfo');
+    if(!tbody) return;
+    if(!offlineNutritionFoods || !offlineNutritionFoods.length){
+      meta && (meta.textContent='載入中…');
+      await ensureNutritionDbLoaded();
+      renderNutritionCategoryOptions();
+    }
+    if(!offlineNutritionFoods.length){
+      tbody.innerHTML = '<tr><td colspan="8">尚未載入 TFDA 離線資料庫，或檔案不存在。</td></tr>';
+      meta && (meta.textContent='0 筆');
+      pagerInfo && (pagerInfo.textContent='—');
+      return;
+    }
+    meta && (meta.textContent = `共 ${offlineNutritionFoods.length} 筆`);
+    filterAndSortNutrition();
+    const total = nutritionBrowserState.filtered.length;
+    const totalPages = Math.max(1, Math.ceil(total / NUTRITION_PAGE_SIZE));
+    if(nutritionBrowserState.page > totalPages) nutritionBrowserState.page = totalPages;
+    if(nutritionBrowserState.page < 1) nutritionBrowserState.page = 1;
+    const start = (nutritionBrowserState.page-1) * NUTRITION_PAGE_SIZE;
+    const slice = nutritionBrowserState.filtered.slice(start, start+NUTRITION_PAGE_SIZE);
+    tbody.innerHTML = slice.map((f, idx)=>{
+      const p = pickNutritionFields(f);
+      const realIdx = start + idx;
+      return `<tr>
+        <td><strong>${escapeHtml(p.name)}</strong>${p.nameEn?`<br><small>${escapeHtml(p.nameEn)}</small>`:''}</td>
+        <td>${escapeHtml(p.category||'—')}</td>
+        <td>${fmt(p.calories,0)}</td>
+        <td>${fmt(p.protein)}</td>
+        <td>${fmt(p.fat)}</td>
+        <td>${fmt(p.carbohydrate)}</td>
+        <td>${fmt(p.sodium,0)}</td>
+        <td class="nutri-actions">
+          <button data-action="adoptNutritionAsNewIngredient" data-idx="${realIdx}">採用為新原料</button>
+          ${nutritionBrowserTargetForm?`<button class="primary" data-action="adoptNutritionToTargetForm" data-idx="${realIdx}">填回原料表單</button>`:''}
+        </td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="8">查無資料。</td></tr>';
+    pagerInfo && (pagerInfo.textContent = `第 ${nutritionBrowserState.page} / ${totalPages} 頁，本頁 ${slice.length} 筆 / 共 ${total} 筆`);
+  }
+
+  function adoptNutritionAsNewIngredient(realIdx){
+    const food = nutritionBrowserState.filtered[realIdx];
+    if(!food){ toast('找不到該筆食品'); return; }
+    const p = pickNutritionFields(food);
+    const dialog = document.getElementById('ingredientDialog');
+    const form = document.getElementById('ingredientForm');
+    if(!dialog || !form){ toast('原料對話框不存在'); return; }
+    form.reset();
+    form.elements.id.value = '';
+    form.elements.name.value = p.name;
+    form.elements.source.value = 'TFND/TFDA 離線資料庫';
+    form.elements.calories.value = p.calories || 0;
+    form.elements.protein.value = p.protein || 0;
+    form.elements.fat.value = p.fat || 0;
+    if(form.elements.saturatedFat) form.elements.saturatedFat.value = p.saturatedFat || 0;
+    if(form.elements.transFat) form.elements.transFat.value = p.transFat || 0;
+    form.elements.carbohydrate.value = p.carbohydrate || 0;
+    if(form.elements.sugar) form.elements.sugar.value = p.sugar || 0;
+    form.elements.sodium.value = p.sodium || 0;
+    if(form.elements.fiber) form.elements.fiber.value = p.fiber || 0;
+    if(form.elements.tags) form.elements.tags.value = p.category ? `TFND,${p.category}` : 'TFND';
+    document.getElementById('ingredientDialogTitle').textContent = '新增原料（自 TFDA 資料庫）';
+    if(!dialog.open) dialog.showModal();
+    toast(`已預填：${p.name}`);
+  }
+
+  function adoptNutritionToTargetForm(realIdx){
+    const food = nutritionBrowserState.filtered[realIdx];
+    if(!food){ toast('找不到該筆食品'); return; }
+    const p = pickNutritionFields(food);
+    const form = nutritionBrowserTargetForm;
+    if(!form){ adoptNutritionAsNewIngredient(realIdx); return; }
+    if(!form.elements.name.value) form.elements.name.value = p.name;
+    form.elements.source.value = 'TFND/TFDA 離線資料庫';
+    form.elements.calories.value = p.calories || 0;
+    form.elements.protein.value = p.protein || 0;
+    form.elements.fat.value = p.fat || 0;
+    if(form.elements.saturatedFat) form.elements.saturatedFat.value = p.saturatedFat || 0;
+    if(form.elements.transFat) form.elements.transFat.value = p.transFat || 0;
+    form.elements.carbohydrate.value = p.carbohydrate || 0;
+    if(form.elements.sugar) form.elements.sugar.value = p.sugar || 0;
+    form.elements.sodium.value = p.sodium || 0;
+    if(form.elements.fiber) form.elements.fiber.value = p.fiber || 0;
+    // 切回原料對話框
+    const dialog = document.getElementById('ingredientDialog');
+    if(dialog && !dialog.open) dialog.showModal();
+    // 切回原料庫分頁（雖然 dialog 是 modal，但保險）
+    toast(`已填回：${p.name}`);
+    nutritionBrowserTargetForm = null;
+  }
+
+  function browseNutritionFromDialog(){
+    const dialog = document.getElementById('ingredientDialog');
+    const form = document.getElementById('ingredientForm');
+    if(dialog && dialog.open){
+      nutritionBrowserTargetForm = form;
+      // 預帶名稱當搜尋
+      const name = (form.elements.name.value||'').trim();
+      if(name) nutritionBrowserState.search = name;
+    }
+    // 切到 TFDA 資料庫分頁
+    document.querySelectorAll('.tab').forEach((t)=>t.classList.toggle('active', t.dataset.tab==='nutrition'));
+    document.querySelectorAll('.panel').forEach((p)=>p.classList.toggle('active', p.id==='nutrition'));
+    const sb = document.getElementById('nutritionSearch');
+    if(sb) sb.value = nutritionBrowserState.search;
+    renderNutritionBrowser();
+  }
+
+  function bindNutritionBrowserInputs(){
+    const sb = document.getElementById('nutritionSearch');
+    const cat = document.getElementById('nutritionCategoryFilter');
+    const sort = document.getElementById('nutritionSort');
+    if(sb && !sb.dataset.nbBound){ sb.dataset.nbBound='1'; sb.addEventListener('input', ()=>{ nutritionBrowserState.search=sb.value; nutritionBrowserState.page=1; renderNutritionBrowser(); }); }
+    if(cat && !cat.dataset.nbBound){ cat.dataset.nbBound='1'; cat.addEventListener('change', ()=>{ nutritionBrowserState.category=cat.value; nutritionBrowserState.page=1; renderNutritionBrowser(); }); }
+    if(sort && !sort.dataset.nbBound){ sort.dataset.nbBound='1'; sort.addEventListener('change', ()=>{ nutritionBrowserState.sort=sort.value; renderNutritionBrowser(); }); }
+  }
+
+  // 暴露給全域事件分派使用（既有的 click 分派器會呼叫這些函數名）
+  window.__flpExtras = {
+    renderPrintSessionPanel, bindPrintSessionInputs, clearPrintSession,
+    applyPrintSessionAndPrint(){
+      // 套用 = 已經在 input 時即時寫入；這裡只要重繪 + 列印
+      renderLabel();
+      setTimeout(()=>window.print(), 80);
+    },
+    renderNutritionBrowser, bindNutritionBrowserInputs, browseNutritionFromDialog,
+    adoptNutritionAsNewIngredient, adoptNutritionToTargetForm,
+    nutritionNextPage(){ nutritionBrowserState.page+=1; renderNutritionBrowser(); },
+    nutritionPrevPage(){ nutritionBrowserState.page=Math.max(1, nutritionBrowserState.page-1); renderNutritionBrowser(); },
+    reloadNutritionDb: async ()=>{ offlineNutritionFoods=[]; await ensureNutritionDbLoaded(); renderNutritionCategoryOptions(); renderNutritionBrowser(); toast('已重新載入 TFDA 離線資料庫'); },
+    loadPrintSession
+  };
+
+  // 啟動：載入 sessionStorage、綁定批次資訊輸入、綁定資料庫瀏覽輸入
+  loadPrintSession();
+  document.addEventListener('DOMContentLoaded', ()=>{
+    bindPrintSessionInputs();
+    bindNutritionBrowserInputs();
+    renderPrintSessionPanel();
+  });
+  // 若 DOMContentLoaded 已過（既有 IIFE 在 body 尾部執行），直接呼叫
+  if(document.readyState !== 'loading'){
+    setTimeout(()=>{ bindPrintSessionInputs(); bindNutritionBrowserInputs(); renderPrintSessionPanel(); }, 0);
+  }
+
+  // 監聽分頁切換：切到 nutrition 時自動載入；切到 label 時刷新批次面板
+  document.addEventListener('click', (e)=>{
+    const t = e.target.closest && e.target.closest('.tab');
+    if(!t) return;
+    const tab = t.dataset.tab;
+    if(tab === 'nutrition'){ setTimeout(renderNutritionBrowser, 0); }
+    if(tab === 'label'){ setTimeout(()=>{ bindPrintSessionInputs(); renderPrintSessionPanel(); }, 0); }
+  }, true);
+
+  // 攔截 data-action click，分派到 __flpExtras 對應的方法（不影響既有分派）
+  document.addEventListener('click', (e)=>{
+    const btn = e.target.closest && e.target.closest('[data-action]');
+    if(!btn) return;
+    const action = btn.dataset.action;
+    const idx = btn.dataset.idx ? parseInt(btn.dataset.idx,10) : null;
+    const ex = window.__flpExtras;
+    switch(action){
+      case 'clearPrintSession': ex.clearPrintSession(); break;
+      case 'applyPrintSessionAndPrint': ex.applyPrintSessionAndPrint(); break;
+      case 'browseNutritionFromDialog': ex.browseNutritionFromDialog(); break;
+      case 'adoptNutritionAsNewIngredient': if(idx!=null) ex.adoptNutritionAsNewIngredient(idx); break;
+      case 'adoptNutritionToTargetForm': if(idx!=null) ex.adoptNutritionToTargetForm(idx); break;
+      case 'nutritionNextPage': ex.nutritionNextPage(); break;
+      case 'nutritionPrevPage': ex.nutritionPrevPage(); break;
+      case 'reloadNutritionDb': ex.reloadNutritionDb(); break;
+    }
+  });
+
+
   // ======== 公司／品牌資料：可手打也可選 ========
   function getDefaultCompany(){return state.companies.find((c)=>c.isDefault)||state.companies[0]||null;}
   function getDefaultBrand(companyId){
@@ -415,7 +761,9 @@
     const company=resolveRecipeCompany(recipe);
     const brand=resolveRecipeBrand(recipe);
     const ingredients=buildIngredientList(recipe);
-    const expiry=computeExpiryDisplay(recipe);
+    const expiry=computeExpiryDisplayMerged(recipe);
+    const storageForLabel = (printSession.storageOverride && printSession.storageOverride.trim()) || recipe.storageCondition || '';
+    const batchNoForLabel = (printSession.batchNo || '').trim();
 
     const addText=(recipe.additives||[]).filter((a)=>a&&a.name).map((a)=>a.function?`${a.name}（${a.function}）`:a.name).join('、');
     const allergenSelected=(recipe.allergens||[]).filter((a)=>a&&a.id);
@@ -462,7 +810,9 @@
         <h4>有效日期 / 保存</h4>
         ${expiry.manufactureDate?`<div class="label-field"><span>製造日期</span><strong>${escapeHtml(expiry.manufactureDate)}</strong></div>`:''}
         ${expiry.expiryDate?`<div class="label-field"><span>有效日期</span><strong>${escapeHtml(expiry.expiryDate)}</strong></div>`:'<div class="label-field"><span>有效日期</span><strong>（請於印製時填入）</strong></div>'}
-        ${recipe.storageCondition?`<div class="label-field"><span>保存條件</span><strong>${escapeHtml(recipe.storageCondition)}</strong></div>`:''}
+        ${storageForLabel?`<div class="label-field"><span>保存條件</span><strong>${escapeHtml(storageForLabel)}</strong></div>`:''}
+        ${batchNoForLabel?`<div class="label-field"><span>批號</span><strong>${escapeHtml(batchNoForLabel)}</strong></div>`:''}
+
       </div>
 
       <div class="label-section nutrition-block">
@@ -485,7 +835,7 @@
 
       ${warnings.length?`<div class="label-section"><h4>其他標示 / 警語</h4>${warnings.map((w)=>`<div class="label-warning">${escapeHtml(w)}</div>`).join('')}</div>`:''}
 
-      <p style="margin-top:10px;font-size:.8rem;color:#444">配方：${escapeHtml(recipe.name)}｜更新：${new Date(recipe.updatedAt).toLocaleDateString('zh-TW')}｜本工具依輸入資料自動計算，正式上市前仍建議由品保 / 法規人員依最新 TFDA 公告複核。</p>
+            <p class="label-footer-meta no-print">配方：${escapeHtml(recipe.name)}｜更新：${new Date(recipe.updatedAt).toLocaleDateString('zh-TW')}｜本工具依輸入資料自動計算，正式上市前仍建議由品保 / 法規人員依最新 TFDA 公告複核。</p>
     </div>`;
 
     editor.innerHTML=`<h3>${escapeHtml(recipe.productName||recipe.name)}</h3>
