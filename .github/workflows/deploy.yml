@@ -1,4 +1,4 @@
-name: Build APK from ZIP
+name: Build Flutter APK from ZIP
 
 on:
   push:
@@ -17,40 +17,34 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Show repository files
+      - name: Show repo files
         run: |
           ls -la
 
-      - name: List ZIP content
-        run: |
-          unzip -l "營養標示.zip" | head -200
-
       - name: Unzip project
         run: |
-          rm -rf extracted
-          mkdir extracted
+          rm -rf extracted project
+          mkdir extracted project
+
           unzip -o "營養標示.zip" -d extracted
 
-          echo "=== extracted files ==="
-          find extracted -maxdepth 3 -type f | head -100
+          echo "=== ZIP content ==="
+          find extracted -maxdepth 4 -type f | head -200
+
+          PUBSPEC_DIR=$(find extracted -name pubspec.yaml -exec dirname {} \; | head -n 1)
+
+          if [ -z "$PUBSPEC_DIR" ]; then
+            echo "找不到 pubspec.yaml，這個 ZIP 可能不是 Flutter 專案"
+            exit 1
+          fi
+
+          echo "Flutter project found at: $PUBSPEC_DIR"
 
           shopt -s dotglob
+          cp -r "$PUBSPEC_DIR"/* project/
 
-          if [ -f extracted/pubspec.yaml ]; then
-            echo "Flutter project is directly inside ZIP"
-            cp -r extracted/* .
-          else
-            FIRST_DIR=$(find extracted -mindepth 1 -maxdepth 1 -type d | head -n 1)
-            if [ -n "$FIRST_DIR" ] && [ -f "$FIRST_DIR/pubspec.yaml" ]; then
-              echo "Flutter project is inside folder: $FIRST_DIR"
-              cp -r "$FIRST_DIR"/* .
-            else
-              echo "Cannot find pubspec.yaml"
-              echo "Your ZIP may not contain a valid Flutter project."
-              find extracted -maxdepth 3 -type f | head -200
-              exit 1
-            fi
-          fi
+          echo "=== Project files ==="
+          ls -la project
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -63,17 +57,29 @@ jobs:
         with:
           channel: stable
 
-      - name: Flutter version
-        run: flutter --version
+      - name: Flutter doctor
+        run: flutter doctor -v
 
-      - name: Get dependencies
+      - name: Get Flutter dependencies
+        working-directory: project
         run: flutter pub get
 
-      - name: Build release APK
+      - name: Create Android folder if missing
+        working-directory: project
+        run: |
+          if [ ! -d android ]; then
+            echo "android folder not found, creating Android project..."
+            flutter create . --platforms=android --org com.lcym346.foodlabel
+          else
+            echo "android folder exists"
+          fi
+
+      - name: Build APK
+        working-directory: project
         run: flutter build apk --release
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: food-label-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: food-label-release-apk
+          path: project/build/app/outputs/flutter-apk/app-release.apk
