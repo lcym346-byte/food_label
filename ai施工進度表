@@ -1,0 +1,26 @@
+📋 施工進度表（共 8 個 commit）
+#	檔案	狀態	重點
+1	web/index.html	✅ CL3XK7 已完成	修 cancel bug、新增 3 個 dialog、配方分頁
+2	web/styles.css	⏭ 下一個	分頁切換、過敏原 grid、列印 2mm 字級
+3	web/app.js	待	核心：companies/brands/addExtended recipe + 九大項列印 + closeDialog action
+4	app/src/main/assets/web/index.html	待	與 #1 完全相同內容（鏡像）
+5	app/src/main/assets/web/styles.css	待	與 #2 鏡像
+6	app/src/main/assets/web/app.js	待	與 #3 鏡像
+7	web/sw.js + 鏡像	待	CACHE_NAME v5 → v6
+8	docs/ARCHITECTURE.md + README.md	待	加九大項章節、company/brand 資料模型、變更紀錄
+🎯 規格錨點（我會嚴守，違反就是我的錯）
+方向 B：完整智能版，所有自動偵測都做成「建議＋使用者勾選」
+公司/品牌/廠商：離線存於 IndexedDB state，可手打也可下拉選
+有效日期：採方案 C（兩種模式使用者選）
+過敏原：TFDA 11 類（甲殼類、芒果、花生、牛奶、蛋、堅果、芝麻、含麩質穀物、大豆、魚類、軟體動物，加亞硫酸鹽類）
+添加物功能：TFDA 標準 17 類
+取消按鈕 bug：type="button" + formnovalidate + closeDialog action
+嚴禁破壞：營養計算、IndexedDB、TFDA 離線查詢、CSV/JSON 匯入匯出、Android Java、法規同步
+🔒 防呆提醒
+如果我接下來的回覆出現以下任一情況，你直接罵我就對了：
+
+沒有完整檔案內容、要你自己拼湊
+改動了「嚴禁破壞」清單上的功能
+漏了同步到 app/src/main/assets/web/
+忘了升 CACHE_NAME
+又開始用 GitHub 編輯連結卻給錯路徑

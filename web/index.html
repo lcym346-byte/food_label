@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f766e" />
+  <meta name="description" content="Food Label Pro 台灣食品營養標示、配方管理與法規同步工具" />
+  <title>Food Label Pro｜食品營養標示</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <p class="eyebrow">台灣食品標示工具</p>
+      <h1>Food Label Pro</h1>
+      <p class="subtitle">配方營養計算、TFDA 九大項標示、法規全文檢索與離線資料庫</p>
+    </div>
+    <div class="header-actions">
+      <button class="secondary" id="installBtn" hidden>安裝 Web App</button>
+      <button class="primary" data-action="syncRegulations">同步法規</button>
+    </div>
+  </header>
+
+  <nav class="tab-bar" aria-label="主要功能切換">
+    <button class="tab active" data-tab="dashboard">總覽</button>
+    <button class="tab" data-tab="ingredients">原料庫</button>
+    <button class="tab" data-tab="recipes">配方</button>
+    <button class="tab" data-tab="label">標示產生</button>
+    <button class="tab" data-tab="nutrition">TFDA 資料庫</button>
+    <button class="tab" data-tab="regulations">法規</button>
+    <button class="tab" data-tab="settings">設定</button>
+  </nav>
+
+  <main>
+    <section id="dashboard" class="panel active">
+      <div class="grid metrics">
+        <article class="card"><span id="ingredientCount">0</span><p>原料資料</p></article>
+        <article class="card"><span id="recipeCount">0</span><p>配方專案</p></article>
+        <article class="card"><span id="regulationCount">0</span><p>法規條文</p></article>
+        <article class="card"><span id="lastSyncAt">尚未同步</span><p>最後同步</p></article>
+      </div>
+      <article class="card hero-card">
+        <h2>商用工作流程</h2>
+        <ol class="steps">
+          <li>於「設定」建立公司／品牌／廠商資訊（一次設定，所有配方共用）。</li>
+          <li>建立或匯入原料營養資料（可從「TFDA 資料庫」直接瀏覽 2,213 筆台灣食品）。</li>
+          <li>新增配方並填寫「標示資訊」分頁（添加物、過敏原、預設保存月數等）。</li>
+          <li>在「標示產生」選配方 → 填本批次製造／有效日期 → 列印。</li>
+        </ol>
+      </article>
+      <article class="card">
+        <h2>最近更新紀錄</h2>
+        <div id="activityLog" class="log-list"></div>
+      </article>
+    </section>
+
+    <section id="ingredients" class="panel">
+      <div class="section-title">
+        <div><p class="eyebrow">Ingredient Database</p><h2>原料資料庫</h2></div>
+        <button class="primary" data-action="openIngredientDialog">新增原料</button>
+      </div>
+      <div class="toolbar">
+        <input id="ingredientSearch" placeholder="搜尋原料名稱、來源或標籤" />
+        <button data-action="exportIngredients">匯出 CSV</button>
+        <label class="file-label">匯入 CSV<input type="file" id="ingredientImport" accept=".csv,text/csv" /></label>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>原料</th><th>熱量</th><th>蛋白質</th><th>脂肪</th><th>碳水</th><th>鈉</th><th>操作</th></tr></thead><tbody id="ingredientTable"></tbody></table></div>
+    </section>
+
+    <section id="recipes" class="panel">
+      <div class="section-title">
+        <div><p class="eyebrow">Recipe Manager</p><h2>配方管理</h2></div>
+        <button class="primary" data-action="createRecipe">新增配方</button>
+      </div>
+      <div id="recipeCards" class="grid cards"></div>
+    </section>
+
+    <section id="label" class="panel">
+      <div class="section-title"><div><p class="eyebrow">Nutrition Label</p><h2>TFDA 九大項標示產生器</h2></div></div>
+      <div class="label-layout">
+        <div class="label-side no-print">
+          <article class="card">
+            <h3>選擇配方</h3>
+            <select id="labelRecipeSelect"></select>
+            <div id="recipeEditor" class="recipe-editor"></div>
+          </article>
+
+          <article class="card">
+            <h3>本批次列印資訊</h3>
+            <p class="muted-note">此區資料只作為「本次列印」用，不會寫回配方。重新整理頁面仍會保留（瀏覽器分頁關閉後清空）。</p>
+            <div class="grid two">
+              <label>有效日期模式
+                <select id="psExpiryMode">
+                  <option value="manufactureDate">製造日 + 保存月數</option>
+                  <option value="date">固定有效日期</option>
+                </select>
+              </label>
+              <label>批號（選填）<input id="psBatchNo" placeholder="例如：A20260516-01" /></label>
+              <label data-ps-field="manufactureDate">製造日期<input id="psManufactureDate" type="date" /></label>
+              <label data-ps-field="manufactureDate">保存月數<input id="psShelfLifeMonths" type="number" step="1" min="0" placeholder="留空則用配方預設" /></label>
+              <label data-ps-field="date" hidden>固定有效日期<input id="psExpiryDate" type="date" /></label>
+              <label class="span-two">保存條件覆寫（選填）<input id="psStorageOverride" placeholder="留空則用配方預設" /></label>
+            </div>
+            <menu class="ps-actions">
+              <button type="button" data-action="clearPrintSession">清除批次</button>
+              <button type="button" class="primary" data-action="applyPrintSessionAndPrint">套用並列印</button>
+            </menu>
+          </article>
+        </div>
+        <article class="label-preview" id="labelPreview"></article>
+      </div>
+    </section>
+
+    <section id="nutrition" class="panel">
+      <div class="section-title">
+        <div><p class="eyebrow">TFND/TFDA Offline Database</p><h2>台灣食品營養成分資料庫</h2></div>
+        <span class="badge" id="nutritionMeta">載入中…</span>
+      </div>
+      <div class="toolbar">
+        <input id="nutritionSearch" placeholder="輸入食品名稱、分類或英文名（即時過濾）" />
+        <select id="nutritionCategoryFilter"><option value="">全部分類</option></select>
+        <select id="nutritionSort">
+          <option value="name">依名稱排序</option>
+          <option value="calories">依熱量</option>
+          <option value="protein">依蛋白質</option>
+          <option value="fat">依脂肪</option>
+          <option value="carbohydrate">依碳水</option>
+          <option value="sodium">依鈉</option>
+        </select>
+        <button data-action="reloadNutritionDb">重新載入資料庫</button>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>食品名稱</th><th>分類</th><th>熱量</th><th>蛋白質</th><th>脂肪</th><th>碳水</th><th>鈉</th><th>操作</th></tr></thead><tbody id="nutritionTable"></tbody></table></div>
+      <div class="pager">
+        <button data-action="nutritionPrevPage">← 上一頁</button>
+        <span id="nutritionPagerInfo">—</span>
+        <button data-action="nutritionNextPage">下一頁 →</button>
+      </div>
+    </section>
+
+    <section id="regulations" class="panel">
+      <div class="section-title">
+        <div><p class="eyebrow">Regulation Search</p><h2>法規資料庫</h2></div>
+        <button class="primary" data-action="syncRegulations">手動同步</button>
+      </div>
+      <div class="toolbar">
+        <input id="regulationSearch" placeholder="搜尋 TFDA、Foodlabel、SGS、標題、內文或標籤" />
+        <button data-action="exportRegulations">匯出 JSON</button>
+      </div>
+      <div id="regulationList" class="regulation-list"></div>
+    </section>
+
+    <section id="settings" class="panel">
+      <div class="section-title"><div><p class="eyebrow">System</p><h2>設定 / 系統資訊</h2></div></div>
+
+      <div class="grid cards">
+        <article class="card">
+          <h3>公司／廠商資訊</h3>
+          <p class="muted-note">可建立多筆，配方標示時自下拉選單選用。也可在配方中手動覆寫單筆。</p>
+          <div id="companyList" class="entity-list"></div>
+          <button class="primary" data-action="openCompanyDialog">新增公司／廠商</button>
+        </article>
+
+        <article class="card">
+          <h3>品牌資料</h3>
+          <p class="muted-note">品牌可關聯到公司，方便同一家公司多品牌切換。</p>
+          <div id="brandList" class="entity-list"></div>
+          <button class="primary" data-action="openBrandDialog">新增品牌</button>
+        </article>
+
+        <article class="card">
+          <h3>資料管理</h3>
+          <button data-action="backupAll">完整備份 JSON</button>
+          <label class="file-label block">還原備份<input type="file" id="restoreInput" accept="application/json,.json" /></label>
+          <button class="danger" data-action="resetDemoData">重置示範資料</button>
+        </article>
+
+        <article class="card">
+          <h3>列印與輸出</h3>
+          <p>Web 版可使用瀏覽器列印；Android 版可透過系統列印服務輸出至熱感標籤機。標示字體已套用 ≥ 2mm 規範。</p>
+          <button data-action="printLabel">列印目前標示</button>
+        </article>
+
+        <article class="card">
+          <h3>相容性</h3>
+          <ul>
+            <li>Web：Chrome / Edge / Safari / Android WebView。</li>
+            <li>Android：minSdk 21，Android 7.1.1(API 25) 可安裝。</li>
+            <li>資料：IndexedDB／localStorage 離線保存。</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <!-- ===================== 原料 Dialog ===================== -->
+  <dialog id="ingredientDialog">
+    <form method="dialog" id="ingredientForm" class="dialog-form">
+      <h2 id="ingredientDialogTitle">新增原料</h2>
+      <input type="hidden" name="id" />
+      <label>原料名稱<input name="name" required placeholder="例如：中筋麵粉、雞胸肉、牛奶" /></label>
+      <div class="online-lookup-box">
+        <div>
+          <strong>TFND/TFDA 離線營養資料庫查詢</strong>
+          <p>輸入原料名稱後，優先比對內建台灣政府食品營養成分資料庫（TFND 2025 UPDATE1）；若連線可用，也會輔助查詢 Open Food Facts 與 USDA。</p>
+        </div>
+        <div class="lookup-btn-group">
+          <button type="button" class="secondary" data-action="lookupIngredientOnline">查詢/選擇營養資料</button>
+          <button type="button" data-action="browseNutritionFromDialog">瀏覽全部資料庫</button>
+        </div>
+      </div>
+      <div id="onlineLookupResults" class="lookup-results"></div>
+      <label>資料來源<input name="source" placeholder="TFND/TFDA 離線資料庫 / USDA / Open Food Facts / 自建" /></label>
+      <div class="grid two">
+        <label>熱量 kcal<input name="calories" type="number" step="0.01" required /></label>
+        <label>蛋白質 g<input name="protein" type="number" step="0.01" required /></label>
+        <label>脂肪 g<input name="fat" type="number" step="0.01" required /></label>
+        <label>飽和脂肪 g<input name="saturatedFat" type="number" step="0.01" /></label>
+        <label>反式脂肪 g<input name="transFat" type="number" step="0.01" /></label>
+        <label>碳水化合物 g<input name="carbohydrate" type="number" step="0.01" required /></label>
+        <label>糖 g<input name="sugar" type="number" step="0.01" /></label>
+        <label>鈉 mg<input name="sodium" type="number" step="0.01" required /></label>
+        <label>膳食纖維 g<input name="fiber" type="number" step="0.01" /></label>
+      </div>
+      <label>標籤 / 備註<textarea name="tags" rows="2"></textarea></label>
+      <menu>
+        <button type="button" value="cancel" formnovalidate data-action="closeDialog" data-dialog="ingredientDialog">取消</button>
+        <button class="primary" value="default">儲存</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <!-- ===================== 配方 Dialog（含三分頁） ===================== -->
+  <dialog id="recipeDialog">
+    <form method="dialog" id="recipeForm" class="dialog-form wide">
+      <h2 id="recipeDialogTitle">新增配方</h2>
+      <input type="hidden" name="id" />
+
+      <nav class="sub-tab-bar" aria-label="配方分頁">
+        <button type="button" class="sub-tab active" data-subtab="basic">基本資料</button>
+        <button type="button" class="sub-tab" data-subtab="items">配方原料</button>
+        <button type="button" class="sub-tab" data-subtab="label">標示資訊</button>
+      </nav>
+
+      <!-- 分頁 1：基本資料 -->
+      <section class="sub-panel active" data-subpanel="basic">
+        <div class="grid two">
+          <label>配方名稱<input name="name" required /></label>
+          <label>標示格式<select name="labelType"><option value="A">格式 A（每份 / 每100g）</option><option value="B">格式 B（每份 / 每日參考值%）</option></select></label>
+          <label>包裝總重 g<input name="packageWeight" type="number" step="0.1" required /></label>
+          <label>每份重量 g/ml<input name="servingSize" type="number" step="0.1" required /></label>
+        </div>
+        <label>備註<textarea name="notes" rows="2"></textarea></label>
+      </section>
+
+      <!-- 分頁 2：配方原料 -->
+      <section class="sub-panel" data-subpanel="items">
+        <h3>配方原料</h3>
+        <p class="muted-note">投入重量會自動換算成標示上的內容物排序（由高到低）。</p>
+        <div id="recipeItems"></div>
+        <button type="button" data-action="addRecipeItem">加入原料列</button>
+      </section>
+
+      <!-- 分頁 3：標示資訊（TFDA 九大項，產品本質屬性） -->
+      <section class="sub-panel" data-subpanel="label">
+        <p class="muted-note">本分頁為「配方本質屬性」。每批次的實際製造日期、有效日期請於「標示產生」頁的<strong>本批次列印資訊</strong>填寫。</p>
+
+        <h3>產品基本</h3>
+        <div class="grid two">
+          <label>產品品名（如與配方名不同）<input name="productName" placeholder="留空則使用配方名稱" /></label>
+          <label>原產地（國）<input name="originCountry" placeholder="例如：台灣、日本" /></label>
+        </div>
+
+        <h3>公司／廠商</h3>
+        <div class="grid two">
+          <label>公司
+            <select name="companyId" id="recipeCompanySelect"><option value="">— 由下方手動輸入 —</option></select>
+          </label>
+          <label>品牌
+            <select name="brandId" id="recipeBrandSelect"><option value="">— 不指定 —</option></select>
+          </label>
+        </div>
+        <details>
+          <summary>覆寫本配方廠商資訊（不影響設定預設值）</summary>
+          <div class="grid two">
+            <label>廠商名稱（覆寫）<input name="companyNameOverride" /></label>
+            <label>電話（覆寫）<input name="companyPhoneOverride" /></label>
+            <label class="span-two">地址（覆寫）<input name="companyAddressOverride" /></label>
+            <label>統一編號（覆寫）<input name="companyTaxIdOverride" /></label>
+          </div>
+        </details>
+
+        <h3>有效日期 / 保存（預設值）</h3>
+        <p class="muted-note">這裡是配方的「預設保存月數」與「預設保存條件」，每次列印時可在標示頁覆寫。</p>
+        <div class="grid two">
+          <label>有效日期模式（預設）
+            <select name="expiryMode" id="recipeExpiryMode">
+              <option value="manufactureDate">製造日 + 保存月數（推薦）</option>
+              <option value="date">固定有效日期</option>
+            </select>
+          </label>
+          <label>保存條件<input name="storageCondition" placeholder="例如：常溫保存、請冷藏 7℃ 以下" /></label>
+          <label data-expiry-field="manufactureDate">製造日期（預設，可空）<input name="manufactureDate" type="date" /></label>
+          <label data-expiry-field="manufactureDate">保存月數（預設）<input name="shelfLifeMonths" type="number" step="1" min="0" placeholder="例如：12" /></label>
+          <label data-expiry-field="date" hidden>固定有效日期（預設，可空）<input name="expiryDate" type="date" /></label>
+        </div>
+
+        <h3>食品添加物</h3>
+        <p class="muted-note">系統會從原料名稱掃出候選（如「泡打粉」「鹽」「香料」），勾選後可選擇功能類別。亦可手動新增。</p>
+        <div id="additiveSuggestions" class="suggest-box"></div>
+        <div id="additiveList"></div>
+        <button type="button" data-action="addAdditiveRow">手動新增添加物</button>
+
+        <h3>過敏原警語（TFDA 11 類）</h3>
+        <p class="muted-note">系統會從原料偵測可能過敏原為「建議勾選」；請人工複核。</p>
+        <div id="allergenGrid" class="allergen-grid"></div>
+
+        <h3>基因改造原料</h3>
+        <p class="muted-note">含黃豆、玉米等基改可能原料須加註。</p>
+        <div id="gmoGrid" class="allergen-grid"></div>
+
+        <h3>特殊警語 / 其他標示</h3>
+        <p class="muted-note">例如：「苯酮尿症患者不宜食用」「本產品為重組肉」「開封後請冷藏」等。</p>
+        <textarea name="warnings" rows="3" placeholder="一行一則警語"></textarea>
+      </section>
+
+      <menu>
+        <button type="button" value="cancel" formnovalidate data-action="closeDialog" data-dialog="recipeDialog">取消</button>
+        <button class="primary" value="default">儲存配方</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <!-- ===================== 公司／廠商 Dialog ===================== -->
+  <dialog id="companyDialog">
+    <form method="dialog" id="companyForm" class="dialog-form">
+      <h2 id="companyDialogTitle">新增公司／廠商</h2>
+      <input type="hidden" name="id" />
+      <label>公司／廠商名稱<input name="name" required placeholder="例如：○○食品股份有限公司" /></label>
+      <div class="grid two">
+        <label>電話<input name="phone" placeholder="例如：02-1234-5678" /></label>
+        <label>統一編號<input name="taxId" placeholder="8 碼統編" /></label>
+        <label class="span-two">地址<input name="address" placeholder="例如：新北市○○區○○路○號" /></label>
+        <label>原產國（預設）<input name="country" placeholder="例如：台灣" /></label>
+        <label>設為預設<select name="isDefault"><option value="false">否</option><option value="true">是</option></select></label>
+      </div>
+      <menu>
+        <button type="button" value="cancel" formnovalidate data-action="closeDialog" data-dialog="companyDialog">取消</button>
+        <button class="primary" value="default">儲存</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <!-- ===================== 品牌 Dialog ===================== -->
+  <dialog id="brandDialog">
+    <form method="dialog" id="brandForm" class="dialog-form">
+      <h2 id="brandDialogTitle">新增品牌</h2>
+      <input type="hidden" name="id" />
+      <label>品牌名稱<input name="name" required placeholder="例如：○○嚴選" /></label>
+      <label>關聯公司<select name="companyId" id="brandCompanySelect"><option value="">— 不指定 —</option></select></label>
+      <label>設為預設<select name="isDefault"><option value="false">否</option><option value="true">是</option></select></label>
+      <menu>
+        <button type="button" value="cancel" formnovalidate data-action="closeDialog" data-dialog="brandDialog">取消</button>
+        <button class="primary" value="default">儲存</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="app.js"></script>
+</body>
+</html>

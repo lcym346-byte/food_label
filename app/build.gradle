@@ -1,38 +1,25 @@
 plugins {
     id 'com.android.application'
-    id 'kotlin-android'
-    id 'dev.flutter.flutter-gradle-plugin'
 }
 
 android {
-    namespace 'com.example.foodlabelpro'
-    compileSdk flutter.compileSdkVersion
-    ndkVersion flutter.ndkVersion
-
-    compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
-    }
-
-    kotlinOptions {
-        jvmTarget = '17'
-    }
+    namespace 'tw.foodlabel.pro'
+    compileSdk 35
 
     defaultConfig {
-        applicationId 'com.example.foodlabelpro'
+        applicationId 'tw.foodlabel.pro'
         minSdk 21
-        targetSdk flutter.targetSdkVersion
-        versionCode flutter.versionCode
-        versionName flutter.versionName
+        targetSdk 35
+        versionCode 1
+        versionName '1.0.0'
     }
 
     buildTypes {
         release {
+            // 交付測試版使用 debug 簽章，GitHub Actions 可直接產出可安裝 APK；正式上架請改 release keystore。
             signingConfig signingConfigs.debug
+            minifyEnabled false
+            shrinkResources false
         }
     }
-}
-
-flutter {
-    source '../..'
 }
