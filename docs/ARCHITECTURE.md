@@ -169,5 +169,7 @@ BUG-01	原料 / 配方 dialog 內的「取消」按鈕無法執行，因為 HTML
 法規資料如未來規模再上升，可在現行 appState 單 key 之外加開獨立 object store（如 regulations），改用 cursor 查詢進一步降低載入時間。
 過敏原與添加物自動偵測可改為更智能的 NLP / 字典樹比對，並引入信心分數。
 11. 變更紀錄
+2026-05-15 (v3.1) 新增列印批次資訊 printSession（sessionStorage 暫存，key `foodLabelPro.printSession.v1`，欄位 recipeId/expiryMode/manufactureDate/shelfLifeMonths/expiryDate/batchNo/storageOverride）；新增 TFDA 離線資料庫瀏覽分頁（分頁大小 50、可分類過濾與多欄位排序、提供「採用為新原料」與「填回原料表單」兩種採用模式）；移除列印底部稽核行（加 `.no-print` `.label-footer-meta` class）；CACHE_NAME v6 → v7；既有營養計算、IndexedDB、TFDA 離線搜尋、CSV、Android Java、法規同步皆不動。
+
 2026-05-15 (v3) 新增 TFDA 九大項完整標示產生（品名、內容物、添加物、淨重、廠商、原產地、有效日期、營養標示、過敏原 / 基改 / 警語）；新增公司 / 品牌資料管理；配方 dialog 改為三分頁（基本資料 / 配方原料 / 標示資訊）；修正取消按鈕 bug；CACHE_NAME v5 → v6；鏡像同步 web/ 與 app/src/main/assets/web/。
 2026-05-15 (v2) 持久層由 localStorage 升級為 IndexedDB；保留 localStorage 作 fallback；解除大量法規全文容量限制；CACHE_NAME v4 → v5。
