@@ -1,54 +1,79 @@
-name: Unzip and Deploy to GitHub Pages
+name: Build APK from ZIP
 
 on:
   push:
     branches:
       - main
-
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: false
 
 jobs:
-  unzip-and-deploy:
+  build-apk:
     runs-on: ubuntu-latest
 
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Prepare output folder
+      - name: Show repository files
         run: |
-          rm -rf public
-          mkdir public
+          ls -la
 
-      - name: Unzip 營養標示.zip
+      - name: List ZIP content
         run: |
-          unzip site.zip -d public
+          unzip -l "營養標示.zip" | head -200
 
-      - name: List files
+      - name: Unzip project
         run: |
-          ls -la public
+          rm -rf extracted
+          mkdir extracted
+          unzip -o "營養標示.zip" -d extracted
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
+          echo "=== extracted files ==="
+          find extracted -maxdepth 3 -type f | head -100
 
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+          shopt -s dotglob
+
+          if [ -f extracted/pubspec.yaml ]; then
+            echo "Flutter project is directly inside ZIP"
+            cp -r extracted/* .
+          else
+            FIRST_DIR=$(find extracted -mindepth 1 -maxdepth 1 -type d | head -n 1)
+            if [ -n "$FIRST_DIR" ] && [ -f "$FIRST_DIR/pubspec.yaml" ]; then
+              echo "Flutter project is inside folder: $FIRST_DIR"
+              cp -r "$FIRST_DIR"/* .
+            else
+              echo "Cannot find pubspec.yaml"
+              echo "Your ZIP may not contain a valid Flutter project."
+              find extracted -maxdepth 3 -type f | head -200
+              exit 1
+            fi
+          fi
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
         with:
-          path: public
+          distribution: temurin
+          java-version: 17
 
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Get dependencies
+        run: flutter pub get
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: food-label-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
